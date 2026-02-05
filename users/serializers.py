@@ -10,27 +10,37 @@ class RegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            "first_name", "last_name", "email", "phone",
-            "birth_date", "gender",
-            "password", "password2"
+            "first_name",
+            "last_name",
+            "email",
+            "phone",
+            "birth_date",
+            "gender",
+            "password",
+            "password2",
         ]
 
     def validate(self, attrs):
-        if attrs['password'] != attrs['password2']:
+        if attrs["password"] != attrs["password2"]:
             raise serializers.ValidationError("Parollar uyğun deyil.")
-        
-        validate_password(attrs['password'])
+        validate_password(attrs["password"])
         return attrs
 
     def create(self, validated_data):
-        validated_data.pop('password2')
-        password = validated_data.pop('password')
+        validated_data.pop("password2")
 
-        user = User(**validated_data)
-        user.set_password(password)
-        user.save()
+        user = User.objects.create_user(
+            email=validated_data["email"],
+            password=validated_data["password"],
+            first_name=validated_data["first_name"],
+            last_name=validated_data["last_name"],
+            phone=validated_data["phone"],
+            birth_date=validated_data["birth_date"],
+            gender=validated_data["gender"],
+        )
 
         return user
+
 
 
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
