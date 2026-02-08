@@ -19,7 +19,8 @@ import jwt
 from django.conf import settings
 from datetime import datetime
 from rest_framework.permissions import IsAuthenticated
-
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 
 
 

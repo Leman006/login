@@ -14,15 +14,8 @@ from pathlib import Path
 
 from datetime import timedelta
 
-SECRET_KEY = "django-insecure-very-secret-key-123"
 
 
-JWT_SETTINGS = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=5),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
-    "ALGORITHM": "HS256",
-    "SIGNING_KEY": SECRET_KEY,
-}
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -83,6 +76,13 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'login.wsgi.application'
 
+
+JWT_SETTINGS = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=5),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
+    "ALGORITHM": "HS256",
+    "SIGNING_KEY": SECRET_KEY,
+}
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
