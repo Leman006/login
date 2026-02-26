@@ -70,6 +70,18 @@ class ResetPasswordEmailSerializer(serializers.Serializer):
         return value
     
 
+class ProfileUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ["first_name", "last_name", "phone", "birth_date", "gender"]
+
+    def update(self, instance, validated_data):
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        return instance
+
+
 class ResetPasswordConfirmSerializer(serializers.Serializer):
     new_password = serializers.CharField(write_only=True)
     new_password2 = serializers.CharField(write_only=True)
