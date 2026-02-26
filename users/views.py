@@ -31,6 +31,8 @@ class RegisterView(generics.CreateAPIView):
 
 
 class LoginView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
         email = request.data.get("email")
         password = request.data.get("password")
@@ -45,33 +47,34 @@ class LoginView(APIView):
         access_token = generate_access_token(user)
         refresh_token = generate_refresh_token(user)
 
-        response = Response(
-            {
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-            }
-        )
+        response = Response({"success": True})
 
         response.set_cookie(
-            "access",
-            access_token,
+            key="access",
+            value=access_token,
             httponly=True,
+            secure=True,
+            samesite="None",
             max_age=300,
-            samesite="Lax",
         )
 
         response.set_cookie(
-            "refresh",
-            refresh_token,
+            key="refresh",
+            value=refresh_token,
             httponly=True,
+            secure=True,
+            samesite="None",
             max_age=60 * 60 * 24 * 30,
-            samesite="Lax",
         )
 
-        response.set_cookie("csrftoken", get_token(request))
+        response.set_cookie(
+            key="csrftoken",
+            value=get_token(request),
+            secure=True,
+            samesite="None",
+        )
 
         return response
-
 
 class ProfileView(APIView):
     permission_classes = [IsAuthenticated]
@@ -159,8 +162,11 @@ class ResetPasswordConfirmView(generics.GenericAPIView):
 
 
 class RefreshTokenView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
         refresh_token = request.COOKIES.get("refresh")
+
         if not refresh_token:
             return Response({"detail": "No refresh token"}, status=401)
 
@@ -172,31 +178,37 @@ class RefreshTokenView(APIView):
             )
         except jwt.ExpiredSignatureError:
             return Response({"detail": "Refresh expired"}, status=401)
+        except jwt.InvalidTokenError:
+            return Response({"detail": "Invalid token"}, status=401)
 
         if payload.get("type") != "refresh":
-            return Response({"detail": "Invalid token"}, status=401)
+            return Response({"detail": "Invalid token type"}, status=401)
 
         user_id = payload["user_id"]
 
-        access_token = jwt.encode(
-            {
-                "user_id": user_id,
-                "type": "access",
-                "exp": datetime.utcnow()
-                + settings.JWT_SETTINGS["ACCESS_TOKEN_LIFETIME"],
-            },
-            settings.JWT_SETTINGS["SIGNING_KEY"],
-            algorithm=settings.JWT_SETTINGS["ALGORITHM"],
-        )
+        access_token = generate_access_token(User.objects.get(id=user_id))
 
-        response = Response({"access_token": access_token})
+        response = Response({"success": True})
 
         response.set_cookie(
-            "access",
-            access_token,
+            key="access",
+            value=access_token,
             httponly=True,
+            secure=True,
+            samesite="None",
             max_age=300,
-            samesite="Lax",
         )
+
+        return response
+    
+
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        response = Response({"success": True})
+
+        response.delete_cookie("access")
+        response.delete_cookie("refresh")
 
         return response
