@@ -97,6 +97,7 @@ DATABASES = {
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "users.authentication.CookieJWTAuthentication",
+         "rest_framework.authentication.SessionAuthentication",
     ),
 }
 

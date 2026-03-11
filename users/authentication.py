@@ -3,7 +3,7 @@ from django.conf import settings
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
 from .models import User
-
+from .models import BlacklistedToken
 
 class CookieJWTAuthentication(BaseAuthentication):
     def authenticate(self, request):
@@ -11,6 +11,9 @@ class CookieJWTAuthentication(BaseAuthentication):
 
         if not token:
             return None
+        
+        if BlacklistedToken.objects.filter(token=token).exists():
+            raise AuthenticationFailed("Token blacklisted")
 
         try:
             payload = jwt.decode(

@@ -53,3 +53,8 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.email
+
+
+class BlacklistedToken(models.Model):
+    token = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
