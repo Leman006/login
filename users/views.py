@@ -235,6 +235,7 @@ class RefreshTokenView(APIView):
         new_refresh_token = generate_refresh_token(user)
 
         response = Response({"success": True})
+        response.delete_cookie("access")
 
         response.set_cookie(
             key="access",
