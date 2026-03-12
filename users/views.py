@@ -11,6 +11,8 @@ from django.conf import settings
 
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
 
 import jwt
 
@@ -25,12 +27,17 @@ from .serializers import (
 from .utils import generate_access_token, generate_refresh_token
 
 
+
 class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
 
 
+@method_decorator(
+    ratelimit(key="ip", rate="5/m", method="POST", block=True),
+    name="post"
+)
 class LoginView(APIView):
     permission_classes = [AllowAny]
 

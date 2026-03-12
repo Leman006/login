@@ -1,17 +1,27 @@
 import jwt
 from django.conf import settings
-from rest_framework.authentication import BaseAuthentication
-from rest_framework.exceptions import AuthenticationFailed
-from .models import User
-from .models import BlacklistedToken
+from rest_framework.authentication import BaseAuthentication, CSRFCheck
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
+from .models import User, BlacklistedToken
+
 
 class CookieJWTAuthentication(BaseAuthentication):
+
+    def enforce_csrf(self, request):
+        check = CSRFCheck(request)
+        check.process_request(request)
+        reason = check.process_view(request, None, (), {})
+        if reason:
+            raise PermissionDenied(f"CSRF Failed: {reason}")
+
     def authenticate(self, request):
         token = request.COOKIES.get("access")
 
         if not token:
             return None
-        
+
+        self.enforce_csrf(request)  # ← единственное добавление сюда
+
         if BlacklistedToken.objects.filter(token=token).exists():
             raise AuthenticationFailed("Token blacklisted")
 
