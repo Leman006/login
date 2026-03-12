@@ -13,7 +13,7 @@ from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
-
+from django.middleware.csrf import CsrfViewMiddleware
 import jwt
 
 from .models import User, BlacklistedToken
@@ -206,6 +206,12 @@ class RefreshTokenView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        csrf_middleware = CsrfViewMiddleware(lambda req: None)
+        csrf_middleware.process_request(request)
+        reason = csrf_middleware.process_view(request, None, (), {})
+        if reason:
+            return Response({"detail": "CSRF Failed"}, status=403)
+
         refresh_token = request.COOKIES.get("refresh")
 
         if not refresh_token:
