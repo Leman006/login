@@ -20,10 +20,7 @@ class CookieJWTAuthentication(BaseAuthentication):
         if not token:
             return None
 
-        self.enforce_csrf(request)  # ← единственное добавление сюда
-
-        if BlacklistedToken.objects.filter(token=token).exists():
-            raise AuthenticationFailed("Token blacklisted")
+        self.enforce_csrf(request)
 
         try:
             payload = jwt.decode(
@@ -39,8 +36,15 @@ class CookieJWTAuthentication(BaseAuthentication):
         if payload.get("type") != "access":
             raise AuthenticationFailed("Invalid token type")
 
-        user_id = payload.get("user_id")
+        jti = payload.get("jti")
+        if not jti:
+            raise AuthenticationFailed("Invalid payload: missing jti")
 
+        # Проверяем blacklist по jti (быстро, индексировано)
+        if BlacklistedToken.objects.filter(jti=jti).exists():
+            raise AuthenticationFailed("Token revoked")
+
+        user_id = payload.get("user_id")
         if not user_id:
             raise AuthenticationFailed("Invalid payload")
 

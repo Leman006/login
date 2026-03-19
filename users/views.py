@@ -5,15 +5,16 @@ from rest_framework.response import Response
 
 from django.contrib.auth import authenticate
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
-from django.middleware.csrf import get_token
+from django.middleware.csrf import get_token, CsrfViewMiddleware
 from django.core.mail import send_mail
 from django.conf import settings
+from django.utils import timezone
 
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
-from django.middleware.csrf import CsrfViewMiddleware
+
 import jwt
 
 from .models import User, BlacklistedToken
@@ -27,6 +28,21 @@ from .serializers import (
 from .utils import generate_access_token, generate_refresh_token
 
 
+def blacklist_token_by_cookie(token_str, token_type):
+    """Декодирует токен без верификации и добавляет его jti в blacklist."""
+    try:
+        payload = jwt.decode(
+            token_str,
+            settings.JWT_SETTINGS["SIGNING_KEY"],
+            algorithms=[settings.JWT_SETTINGS["ALGORITHM"]],
+            options={"verify_exp": False},  # токен мог уже истечь — всё равно блокируем
+        )
+        jti = payload.get("jti")
+        if jti:
+            BlacklistedToken.objects.get_or_create(jti=jti, defaults={"token_type": token_type})
+    except Exception:
+        pass
+
 
 class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
@@ -34,8 +50,13 @@ class RegisterView(generics.CreateAPIView):
     permission_classes = [AllowAny]
 
 
+# Brute-force: 5 попыток в минуту по IP И по email (ключ user_or_ip)
 @method_decorator(
     ratelimit(key="ip", rate="5/m", method="POST", block=True),
+    name="post"
+)
+@method_decorator(
+    ratelimit(key="post:email", rate="10/m", method="POST", block=True),
     name="post"
 )
 class LoginView(APIView):
@@ -45,13 +66,41 @@ class LoginView(APIView):
         email = request.data.get("email")
         password = request.data.get("password")
 
+        try:
+            user_obj = User.objects.get(email=email)
+
+            # Проверяем блокировку аккаунта
+            if user_obj.locked_until and timezone.now() < user_obj.locked_until:
+                return Response(
+                    {"detail": "Hesab müvəqqəti bloklanıb. Bir az sonra yenidən cəhd edin."},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+        except User.DoesNotExist:
+            user_obj = None
+
         user = authenticate(request, email=email, password=password)
 
         if not user:
+            # Увеличиваем счётчик неудачных попыток
+            if user_obj:
+                user_obj.failed_login_attempts += 1
+                # После 5 неудачных попыток — блокировка на 15 минут
+                if user_obj.failed_login_attempts >= 5:
+                    from datetime import timedelta
+                    user_obj.locked_until = timezone.now() + timedelta(minutes=15)
+                    user_obj.failed_login_attempts = 0
+                user_obj.save(update_fields=["failed_login_attempts", "locked_until"])
+
             return Response(
                 {"detail": "Invalid credentials"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # Успешный вход — сбрасываем счётчик
+        if user_obj:
+            user_obj.failed_login_attempts = 0
+            user_obj.locked_until = None
+            user_obj.save(update_fields=["failed_login_attempts", "locked_until"])
 
         access_token = generate_access_token(user)
         refresh_token = generate_refresh_token(user)
@@ -150,6 +199,7 @@ class ResetPasswordEmailView(generics.GenericAPIView):
 
         email = serializer.validated_data["email"]
 
+        # try/except — email olmasa belə eyni cavab qaytarılır (enumeration yoxdur)
         try:
             user = User.objects.get(email=email)
 
@@ -206,6 +256,7 @@ class RefreshTokenView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        # CSRF проверка для незащищённого эндпоинта
         csrf_middleware = CsrfViewMiddleware(lambda req: None)
         csrf_middleware.process_request(request)
         reason = csrf_middleware.process_view(request, None, (), {})
@@ -216,9 +267,6 @@ class RefreshTokenView(APIView):
 
         if not refresh_token:
             return Response({"detail": "No refresh token"}, status=401)
-
-        if BlacklistedToken.objects.filter(token=refresh_token).exists():
-            return Response({"detail": "Token revoked"}, status=401)
 
         try:
             payload = jwt.decode(
@@ -234,6 +282,14 @@ class RefreshTokenView(APIView):
         if payload.get("type") != "refresh":
             return Response({"detail": "Invalid token type"}, status=401)
 
+        jti = payload.get("jti")
+        if not jti:
+            return Response({"detail": "Invalid token: missing jti"}, status=401)
+
+        # Проверяем blacklist по jti
+        if BlacklistedToken.objects.filter(jti=jti).exists():
+            return Response({"detail": "Token revoked"}, status=401)
+
         user_id = payload.get("user_id")
 
         try:
@@ -241,14 +297,18 @@ class RefreshTokenView(APIView):
         except User.DoesNotExist:
             return Response({"detail": "User not found"}, status=404)
 
-        # rotation
-        BlacklistedToken.objects.create(token=refresh_token)
+        # Rotation: старый refresh в blacklist
+        BlacklistedToken.objects.create(jti=jti, token_type="refresh")
+
+        # Старый access token тоже блокируем немедленно
+        old_access = request.COOKIES.get("access")
+        if old_access:
+            blacklist_token_by_cookie(old_access, "access")
 
         access_token = generate_access_token(user)
         new_refresh_token = generate_refresh_token(user)
 
         response = Response({"success": True})
-        response.delete_cookie("access")
 
         response.set_cookie(
             key="access",
@@ -278,11 +338,12 @@ class LogoutView(APIView):
         access = request.COOKIES.get("access")
         refresh = request.COOKIES.get("refresh")
 
+        # Блокируем оба токена по jti
         if access:
-            BlacklistedToken.objects.create(token=access)
+            blacklist_token_by_cookie(access, "access")
 
         if refresh:
-            BlacklistedToken.objects.create(token=refresh)
+            blacklist_token_by_cookie(refresh, "refresh")
 
         response = Response({"success": True})
 

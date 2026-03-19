@@ -3,6 +3,7 @@ from .models import User
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 
+
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     password2 = serializers.CharField(write_only=True)
@@ -42,10 +43,6 @@ class RegisterSerializer(serializers.ModelSerializer):
         return user
 
 
-
-
-
-
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True)
@@ -56,19 +53,18 @@ class ChangePasswordSerializer(serializers.Serializer):
             raise serializers.ValidationError("Yeni parollar uyğun deyil.")
         validate_password(attrs["new_password"])
         return attrs
-    
 
 
 User = get_user_model()
 
+
 class ResetPasswordEmailSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
-    def validate_email(self, value):
-        if not User.objects.filter(email=value).exists():
-            raise serializers.ValidationError("Bu email üzrə istifadəçi tapılmadı.")
-        return value
-    
+    # validate_email silindi — artıq serializer email yoxlamır,
+    # view daxilində try/except ilə idarə olunur,
+    # həmişə eyni cavab qaytarılır (email enumeration yoxdur)
+
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:

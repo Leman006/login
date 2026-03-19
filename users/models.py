@@ -46,6 +46,9 @@ class User(AbstractUser):
         ],
     )
 
+    failed_login_attempts = models.PositiveIntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
+
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []
 
@@ -56,5 +59,9 @@ class User(AbstractUser):
 
 
 class BlacklistedToken(models.Model):
-    token = models.TextField()
+    jti = models.CharField(max_length=36, unique=True, db_index=True)  
+    token_type = models.CharField(max_length=10)                        
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.token_type} | {self.jti}"

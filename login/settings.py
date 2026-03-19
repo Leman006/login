@@ -133,6 +133,17 @@ USE_I18N = True
 
 USE_TZ = True
 RATELIMIT_ENABLE = True
+RATELIMIT_USE_CACHE = "default"
+
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": "redis://127.0.0.1:6379/1",
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        }
+    }
+}
 AUTH_USER_MODEL = 'users.User'
 
 # Static files (CSS, JavaScript, Images)
