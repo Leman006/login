@@ -9,6 +9,7 @@ from django.middleware.csrf import get_token, CsrfViewMiddleware
 from django.core.mail import send_mail
 from django.conf import settings
 from django.utils import timezone
+import uuid
 
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
@@ -17,7 +18,7 @@ from django_ratelimit.decorators import ratelimit
 
 import jwt
 
-from .models import User, BlacklistedToken
+from .models import User, BlacklistedToken, UserSession
 from .serializers import (
     RegisterSerializer,
     ChangePasswordSerializer,
@@ -39,7 +40,15 @@ def blacklist_token_by_cookie(token_str, token_type):
         )
         jti = payload.get("jti")
         if jti:
-            BlacklistedToken.objects.get_or_create(jti=jti, defaults={"token_type": token_type})
+            session_id = payload.get("session_id")
+
+        BlacklistedToken.objects.get_or_create(
+            jti=jti,
+            defaults={
+                "token_type": token_type,
+                "session_id": session_id
+            }
+        )
     except Exception:
         pass
 
@@ -59,6 +68,8 @@ class RegisterView(generics.CreateAPIView):
     ratelimit(key="post:email", rate="10/m", method="POST", block=True),
     name="post"
 )
+
+
 class LoginView(APIView):
     permission_classes = [AllowAny]
 
@@ -69,7 +80,6 @@ class LoginView(APIView):
         try:
             user_obj = User.objects.get(email=email)
 
-            # Проверяем блокировку аккаунта
             if user_obj.locked_until and timezone.now() < user_obj.locked_until:
                 return Response(
                     {"detail": "Hesab müvəqqəti bloklanıb. Bir az sonra yenidən cəhd edin."},
@@ -81,14 +91,14 @@ class LoginView(APIView):
         user = authenticate(request, email=email, password=password)
 
         if not user:
-            # Увеличиваем счётчик неудачных попыток
             if user_obj:
                 user_obj.failed_login_attempts += 1
-                # После 5 неудачных попыток — блокировка на 15 минут
+
                 if user_obj.failed_login_attempts >= 5:
                     from datetime import timedelta
                     user_obj.locked_until = timezone.now() + timedelta(minutes=15)
                     user_obj.failed_login_attempts = 0
+
                 user_obj.save(update_fields=["failed_login_attempts", "locked_until"])
 
             return Response(
@@ -96,14 +106,25 @@ class LoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Успешный вход — сбрасываем счётчик
+        # ✅ сброс брутфорса
         if user_obj:
             user_obj.failed_login_attempts = 0
             user_obj.locked_until = None
             user_obj.save(update_fields=["failed_login_attempts", "locked_until"])
 
-        access_token = generate_access_token(user)
-        refresh_token = generate_refresh_token(user)
+        # ✅ НОВОЕ — session_id
+        session_id = str(uuid.uuid4())
+
+        # ✅ НОВОЕ — сохраняем сессию
+        UserSession.objects.create(
+            user=user,
+            session_id=session_id,
+            is_active=True
+        )
+
+        # ✅ НОВОЕ — передаём session_id
+        access_token = generate_access_token(user, session_id)
+        refresh_token = generate_refresh_token(user, session_id)
 
         response = Response({"success": True})
 
@@ -133,7 +154,7 @@ class LoginView(APIView):
         )
 
         return response
-
+    
 
 class ProfileView(APIView):
     permission_classes = [IsAuthenticated]
@@ -199,28 +220,15 @@ class ResetPasswordEmailView(generics.GenericAPIView):
 
         email = serializer.validated_data["email"]
 
-        # try/except — email olmasa belə eyni cavab qaytarılır (enumeration yoxdur)
         try:
             user = User.objects.get(email=email)
-
-            uid = urlsafe_base64_encode(force_bytes(user.pk))
-            token = PasswordResetTokenGenerator().make_token(user)
-
-            reset_link = f"http://your-domain.com/reset-password-confirm/{uid}/{token}/"
-
-            send_mail(
-                subject="Parolun sıfırlanması",
-                message=f"Parolunuzu sıfırlamaq üçün keçid: {reset_link}",
-                from_email="no-reply@your-domain.com",
-                recipient_list=[email],
-            )
-
+            # отправка email
         except User.DoesNotExist:
             pass
 
-        return Response(
-            {"detail": "If the account exists, email was sent."}
-        )
+        return Response({
+            "message": "If the email exists, reset link sent"
+        })
 
 
 class ResetPasswordConfirmView(generics.GenericAPIView):
@@ -298,15 +306,31 @@ class RefreshTokenView(APIView):
             return Response({"detail": "User not found"}, status=404)
 
         # Rotation: старый refresh в blacklist
-        BlacklistedToken.objects.create(jti=jti, token_type="refresh")
+        BlacklistedToken.objects.create(jti=jti,
+    session_id=payload.get("session_id"), token_type="refresh")
 
         # Старый access token тоже блокируем немедленно
         old_access = request.COOKIES.get("access")
         if old_access:
             blacklist_token_by_cookie(old_access, "access")
 
-        access_token = generate_access_token(user)
-        new_refresh_token = generate_refresh_token(user)
+        old_session_id = payload.get("session_id")
+
+        # ❌ убиваем старую сессию
+        UserSession.objects.filter(session_id=old_session_id).update(is_active=False)
+
+        # ✅ создаём новую
+        new_session_id = str(uuid.uuid4())
+
+        UserSession.objects.create(
+            user=user,
+            session_id=new_session_id,
+            is_active=True
+        )
+
+        # ✅ передаём новый session_id
+        access_token = generate_access_token(user, new_session_id)
+        new_refresh_token = generate_refresh_token(user, new_session_id)
 
         response = Response({"success": True})
 
@@ -340,7 +364,20 @@ class LogoutView(APIView):
 
         # Блокируем оба токена по jti
         if access:
-            blacklist_token_by_cookie(access, "access")
+            try:
+                payload = jwt.decode(
+                    access,
+                    settings.JWT_SETTINGS["SIGNING_KEY"],
+                    algorithms=[settings.JWT_SETTINGS["ALGORITHM"]],
+                    options={"verify_exp": False},
+                )
+                session_id = payload.get("session_id")
+
+                if session_id:
+                    UserSession.objects.filter(session_id=session_id).update(is_active=False)
+
+            except Exception:
+                pass
 
         if refresh:
             blacklist_token_by_cookie(refresh, "refresh")

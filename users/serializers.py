@@ -58,12 +58,8 @@ class ChangePasswordSerializer(serializers.Serializer):
 User = get_user_model()
 
 
-class ResetPasswordEmailSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-
-    # validate_email silindi — artıq serializer email yoxlamır,
-    # view daxilində try/except ilə idarə olunur,
-    # həmişə eyni cavab qaytarılır (email enumeration yoxdur)
+def validate(self, attrs):
+    return attrs
 
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):

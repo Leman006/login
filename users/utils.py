@@ -4,12 +4,13 @@ from django.conf import settings
 from django.utils import timezone
 
 
-def generate_access_token(user):
+def generate_access_token(user, session_id):
     now = timezone.now()
     payload = {
         "user_id": user.id,
         "type": "access",
         "jti": str(uuid.uuid4()),       # уникальный ID токена
+        "session_id": session_id,
         "iat": int(now.timestamp()),     # время выдачи
         "exp": now + settings.JWT_SETTINGS["ACCESS_TOKEN_LIFETIME"],
     }
@@ -21,12 +22,13 @@ def generate_access_token(user):
     )
 
 
-def generate_refresh_token(user):
+def generate_refresh_token(user, session_id):
     now = timezone.now()
     payload = {
         "user_id": user.id,
         "type": "refresh",
         "jti": str(uuid.uuid4()),       # уникальный ID токена
+        "session_id": session_id,
         "iat": int(now.timestamp()),     # время выдачи
         "exp": now + settings.JWT_SETTINGS["REFRESH_TOKEN_LIFETIME"],
     }

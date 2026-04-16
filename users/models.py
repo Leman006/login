@@ -48,6 +48,8 @@ class User(AbstractUser):
 
     failed_login_attempts = models.PositiveIntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
+    last_failed_login = models.DateTimeField(null=True, blank=True)
+    is_blocked = models.BooleanField(default=False)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []
@@ -59,9 +61,16 @@ class User(AbstractUser):
 
 
 class BlacklistedToken(models.Model):
-    jti = models.CharField(max_length=36, unique=True, db_index=True)  
-    token_type = models.CharField(max_length=10)                        
+    jti = models.CharField(max_length=36, db_index=True)
+    session_id = models.CharField(max_length=255, null=True, db_index=True)
+    token_type = models.CharField(max_length=10)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.token_type} | {self.jti}"
+    
+class UserSession(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    session_id = models.CharField(max_length=255, unique=True, db_index=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
