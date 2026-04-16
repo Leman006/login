@@ -26,7 +26,7 @@ from .serializers import (
     ResetPasswordConfirmSerializer,
     ProfileUpdateSerializer,
 )
-from .utils import generate_access_token, generate_refresh_token
+from .utils import generate_access_token, generate_refresh_token, get_device_name
 
 
 def blacklist_token_by_cookie(token_str, token_type):
@@ -114,13 +114,19 @@ class LoginView(APIView):
 
         # ✅ НОВОЕ — session_id
         session_id = str(uuid.uuid4())
+        family_id = uuid.uuid4()
+        user_agent = request.META.get("HTTP_USER_AGENT")
+        device_name = get_device_name(user_agent)
 
         UserSession.objects.create(
             user=user,
             session_id=session_id,
+            token_family=family_id,   # ✅ ДОБАВИЛИ
             is_active=True,
             ip_address=request.META.get("REMOTE_ADDR"),
-            user_agent=request.META.get("HTTP_USER_AGENT"),
+            user_agent=user_agent,
+            device_name=device_name,
+            
         )
 
         # ✅ НОВОЕ — передаём session_id
@@ -317,15 +323,29 @@ class RefreshTokenView(APIView):
 
         old_session_id = payload.get("session_id")
 
-        # убиваем старую сессию
-        UserSession.objects.filter(session_id=old_session_id).update(is_active=False)
+        try:
+            old_session = UserSession.objects.get(session_id=old_session_id)
+        except UserSession.DoesNotExist:
+            return Response({"detail": "Session not found"}, status=401)
+
+        if not old_session.is_active:
+            UserSession.objects.filter(
+                token_family=old_session.token_family
+            ).update(is_active=False)
+
+            return Response({"detail": "Token reuse detected"}, status=401)
 
         # создаём новую
+        # деактивируем старую сессию
+        old_session.is_active = False
+        old_session.save(update_fields=["is_active"])
+
         new_session_id = str(uuid.uuid4())
 
         UserSession.objects.create(
             user=user,
             session_id=new_session_id,
+            token_family=old_session.token_family,  
             is_active=True,
             ip_address=request.META.get("REMOTE_ADDR"),
             user_agent=request.META.get("HTTP_USER_AGENT"),
@@ -377,7 +397,11 @@ class LogoutView(APIView):
                 session_id = payload.get("session_id")
 
                 if session_id:
-                    UserSession.objects.filter(session_id=session_id).update(is_active=False)
+                    UserSession.objects.filter(session_id=session_id).update(
+                        is_active=False,
+                        revoked_at=timezone.now(),
+                        revoked_reason="Logout"
+                    )
 
             except Exception:
                 pass
@@ -406,8 +430,9 @@ class UserSessionsView(APIView):
         for s in sessions:
             data.append({
                 "session_id": s.session_id,
-                "ip": s.ip_address,
-                "user_agent": s.user_agent,
+                "device": s.device_name,
+                "location": getattr(s, "location", None),
+                "last_activity": s.last_activity_at,
                 "created_at": s.created_at,
                 "is_active": s.is_active,
                 "is_current": s.session_id == current_session_id
@@ -436,6 +461,10 @@ class LogoutAllView(APIView):
 
         UserSession.objects.filter(user=request.user)\
             .exclude(session_id=current_session)\
-            .update(is_active=False)
+            .update(
+                is_active=False,
+                revoked_at=timezone.now(),
+                revoked_reason="Logout all devices"
+            )
 
         return Response({"success": True})

@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
+import uuid
 
 
 class UserManager(BaseUserManager):
@@ -68,14 +69,32 @@ class BlacklistedToken(models.Model):
 
     def __str__(self):
         return f"{self.token_type} | {self.jti}"
-    
+
+
 class UserSession(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
+
     session_id = models.CharField(max_length=255, unique=True, db_index=True)
-    
+    token_family = models.UUIDField(default=uuid.uuid4, editable=False, db_index=True)
+
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     user_agent = models.TextField(null=True, blank=True)
-    
+
+    # 🔥 НОВОЕ (Instagram-like UX)
+    device_name = models.CharField(max_length=255, null=True, blank=True)
+    location = models.CharField(max_length=255, null=True, blank=True)
+
+    # 🔥 Состояние сессии
     is_active = models.BooleanField(default=True)
+
+    # 🔥 Временные метки
     created_at = models.DateTimeField(auto_now_add=True)
     last_activity_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    # 🔥 revoke tracking
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_reason = models.CharField(max_length=255, null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.user.email} | {self.device_name} | {self.is_active}"

@@ -2,6 +2,8 @@ import jwt
 import uuid
 from django.conf import settings
 from django.utils import timezone
+from user_agents import parse
+
 
 
 def generate_access_token(user, session_id):
@@ -48,3 +50,14 @@ def get_tokens_for_user(user):
         "access": access_token,
         "refresh": refresh_token,
     }
+
+def get_device_name(user_agent_string):
+    if not user_agent_string:
+        return "Unknown device"
+
+    ua = parse(user_agent_string)
+
+    device = ua.device.family or "Unknown device"
+    browser = ua.browser.family or "Unknown browser"
+
+    return f"{device} - {browser}"
