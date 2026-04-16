@@ -10,7 +10,7 @@ from django.core.mail import send_mail
 from django.conf import settings
 from django.utils import timezone
 import uuid
-
+from datetime import timedelta
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.decorators import method_decorator
@@ -26,7 +26,7 @@ from .serializers import (
     ResetPasswordConfirmSerializer,
     ProfileUpdateSerializer,
 )
-from .utils import generate_access_token, generate_refresh_token, get_device_name
+from .utils import generate_access_token, generate_refresh_token, get_device_name, get_location
 
 
 def blacklist_token_by_cookie(token_str, token_type):
@@ -39,16 +39,15 @@ def blacklist_token_by_cookie(token_str, token_type):
             options={"verify_exp": False},  # токен мог уже истечь — всё равно блокируем
         )
         jti = payload.get("jti")
+        session_id = payload.get("session_id")
         if jti:
-            session_id = payload.get("session_id")
-
-        BlacklistedToken.objects.get_or_create(
-            jti=jti,
-            defaults={
-                "token_type": token_type,
-                "session_id": session_id
-            }
-        )
+            BlacklistedToken.objects.get_or_create(
+                jti=jti,
+                defaults={
+                    "token_type": token_type,
+                    "session_id": session_id
+                }
+            )
     except Exception:
         pass
 
@@ -106,27 +105,32 @@ class LoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ✅ сброс брутфорса
+        # сброс брутфорса
         if user_obj:
             user_obj.failed_login_attempts = 0
             user_obj.locked_until = None
             user_obj.save(update_fields=["failed_login_attempts", "locked_until"])
 
-        # ✅ НОВОЕ — session_id
+        # НОВОЕ — session_id
         session_id = str(uuid.uuid4())
         family_id = uuid.uuid4()
-        user_agent = request.META.get("HTTP_USER_AGENT")
+        expires_at = timezone.now() + timedelta(days=7)
+        user_agent = request.META.get("HTTP_USER_AGENT", "")
+        ip = request.META.get("REMOTE_ADDR")
+
         device_name = get_device_name(user_agent)
+        location = get_location(ip)
 
         UserSession.objects.create(
             user=user,
             session_id=session_id,
-            token_family=family_id,   # ✅ ДОБАВИЛИ
+            token_family=family_id,
             is_active=True,
-            ip_address=request.META.get("REMOTE_ADDR"),
+            ip_address=ip,
             user_agent=user_agent,
             device_name=device_name,
-            
+            location=location,
+            expires_at=expires_at,
         )
 
         # ✅ НОВОЕ — передаём session_id
@@ -342,13 +346,23 @@ class RefreshTokenView(APIView):
 
         new_session_id = str(uuid.uuid4())
 
+        user_agent = request.META.get("HTTP_USER_AGENT", "")
+        ip = request.META.get("REMOTE_ADDR")
+
+        device_name = get_device_name(user_agent)
+        location = get_location(ip)
+        expires_at = timezone.now() + timedelta(days=7)
+
         UserSession.objects.create(
             user=user,
             session_id=new_session_id,
-            token_family=old_session.token_family,  
+            token_family=old_session.token_family,
             is_active=True,
-            ip_address=request.META.get("REMOTE_ADDR"),
-            user_agent=request.META.get("HTTP_USER_AGENT"),
+            ip_address=ip,
+            user_agent=user_agent,
+            device_name=device_name,
+            location=location,
+            expires_at=expires_at,
         )
 
         # передаём новый session_id
@@ -448,7 +462,11 @@ class RevokeSessionView(APIView):
         UserSession.objects.filter(
             user=request.user,
             session_id=session_id
-        ).update(is_active=False)
+        ).update(
+            is_active=False,
+            revoked_at=timezone.now(),
+            revoked_reason="User action"
+        )
 
         return Response({"success": True})
     

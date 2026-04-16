@@ -3,7 +3,7 @@ import uuid
 from django.conf import settings
 from django.utils import timezone
 from user_agents import parse
-
+import requests
 
 
 def generate_access_token(user, session_id):
@@ -61,3 +61,12 @@ def get_device_name(user_agent_string):
     browser = ua.browser.family or "Unknown browser"
 
     return f"{device} - {browser}"
+
+def get_location(ip):
+    try:
+        res = requests.get(f"http://ip-api.com/json/{ip}").json()
+        city = res.get("city")
+        country = res.get("country")
+        return f"{city}, {country}"
+    except:
+        return "Unknown"
