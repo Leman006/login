@@ -83,3 +83,12 @@ class ResetPasswordConfirmSerializer(serializers.Serializer):
             raise serializers.ValidationError("Parollar uyğun deyil.")
         validate_password(attrs["new_password"])
         return attrs
+    
+class ResetPasswordEmailSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        # Проверяем, существует ли пользователь с таким email
+        if not User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("Bu email ilə istifadəçi tapılmadı.")
+        return value

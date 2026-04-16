@@ -115,11 +115,12 @@ class LoginView(APIView):
         # ✅ НОВОЕ — session_id
         session_id = str(uuid.uuid4())
 
-        # ✅ НОВОЕ — сохраняем сессию
         UserSession.objects.create(
             user=user,
             session_id=session_id,
-            is_active=True
+            is_active=True,
+            ip_address=request.META.get("REMOTE_ADDR"),
+            user_agent=request.META.get("HTTP_USER_AGENT"),
         )
 
         # ✅ НОВОЕ — передаём session_id
@@ -316,19 +317,21 @@ class RefreshTokenView(APIView):
 
         old_session_id = payload.get("session_id")
 
-        # ❌ убиваем старую сессию
+        # убиваем старую сессию
         UserSession.objects.filter(session_id=old_session_id).update(is_active=False)
 
-        # ✅ создаём новую
+        # создаём новую
         new_session_id = str(uuid.uuid4())
 
         UserSession.objects.create(
             user=user,
             session_id=new_session_id,
-            is_active=True
+            is_active=True,
+            ip_address=request.META.get("REMOTE_ADDR"),
+            user_agent=request.META.get("HTTP_USER_AGENT"),
         )
 
-        # ✅ передаём новый session_id
+        # передаём новый session_id
         access_token = generate_access_token(user, new_session_id)
         new_refresh_token = generate_refresh_token(user, new_session_id)
 
@@ -389,3 +392,50 @@ class LogoutView(APIView):
         response.delete_cookie("csrftoken", samesite="None")
 
         return response
+    
+
+class UserSessionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        sessions = UserSession.objects.filter(user=request.user)
+
+        current_session_id = request.auth.get("session_id")
+
+        data = []
+        for s in sessions:
+            data.append({
+                "session_id": s.session_id,
+                "ip": s.ip_address,
+                "user_agent": s.user_agent,
+                "created_at": s.created_at,
+                "is_active": s.is_active,
+                "is_current": s.session_id == current_session_id
+            })
+
+        return Response(data)
+    
+
+class RevokeSessionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, session_id):
+        UserSession.objects.filter(
+            user=request.user,
+            session_id=session_id
+        ).update(is_active=False)
+
+        return Response({"success": True})
+    
+
+class LogoutAllView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        current_session = request.auth.get("session_id")
+
+        UserSession.objects.filter(user=request.user)\
+            .exclude(session_id=current_session)\
+            .update(is_active=False)
+
+        return Response({"success": True})

@@ -19,7 +19,8 @@ class CookieJWTAuthentication(BaseAuthentication):
         if not token:
             return None
 
-        self.enforce_csrf(request)
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            self.enforce_csrf(request)
 
         try:
             payload = jwt.decode(
@@ -60,4 +61,4 @@ class CookieJWTAuthentication(BaseAuthentication):
         except User.DoesNotExist:
             raise AuthenticationFailed("User not found")
 
-        return (user, None)
+        return (user, payload)

@@ -72,5 +72,10 @@ class BlacklistedToken(models.Model):
 class UserSession(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     session_id = models.CharField(max_length=255, unique=True, db_index=True)
+    
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(null=True, blank=True)
+    
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    last_activity_at = models.DateTimeField(auto_now=True)
